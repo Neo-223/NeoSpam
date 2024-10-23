@@ -9,37 +9,37 @@ struct ContentView: View {
     @State private var selectedWebhooks: Set<String> = []
     @State private var isSubmitted: Bool = false
     @State private var sendCount: String = "1"
-    @State private var status: String = "inactive" // New state variable for status
-    @State private var statusColor: Color = .red // New state variable for status color
-
+    @State private var status: String = "inactive"
+    @State private var statusColor: Color = .red
+    
     var body: some View {
         ZStack {
             LinearGradient(gradient: Gradient(colors: [Color.purple, Color.blue]), startPoint: .topLeading, endPoint: .bottomTrailing)
                 .edgesIgnoringSafeArea(.all)
-
+            
             VStack {
-                Text("Neo")
+                Text("NeoSpam")
                     .font(.system(size: 48, weight: .bold, design: .serif))
                     .foregroundColor(.white)
                     .shadow(color: .gray, radius: 10, x: 0, y: 5)
                     .padding()
                     .frame(maxWidth: .infinity, alignment: .center)
-
+                
                 Spacer()
-
+                
                 VStack(spacing: 20) {
                     Text("Status: \(status)")
                         .font(.headline)
                         .foregroundColor(statusColor)
                         .padding(.bottom, 10)
-
+                    
                     CustomTextField(placeholder: Text("Enter text here").foregroundColor(.gray), text: $textInput)
                         .padding()
                         .background(Color.white)
                         .cornerRadius(10)
                         .shadow(radius: 5)
                         .foregroundColor(.black)
-
+                    
                     ScrollView {
                         LazyVStack(spacing: 0) {
                             ForEach(Array(savedWebhooks.enumerated()), id: \.element) { index, webhook in
@@ -69,14 +69,15 @@ struct ContentView: View {
                     .background(Color.white)
                     .cornerRadius(10)
                     .shadow(radius: 5)
-
+                    
                     CustomTextField(placeholder: Text("Enter number of times to send").foregroundColor(.gray), text: $sendCount)
                         .padding()
                         .background(Color.white)
                         .cornerRadius(10)
                         .shadow(radius: 5)
                         .foregroundColor(.black)
-
+                        .keyboardType(.numberPad) // Use number keyboard
+                    
                     Button(action: {
                         sendTextToWebhooks()
                         isSubmitted = true
@@ -94,9 +95,9 @@ struct ContentView: View {
                     }
                 }
                 .padding()
-
+                
                 Spacer()
-
+                
                 HStack {
                     Spacer()
                     Button(action: {
@@ -114,23 +115,33 @@ struct ContentView: View {
             SettingsView(webhookURL: $webhookURL, savedWebhooks: $savedWebhooks)
         }
     }
-
+    
     private func sendTextToWebhooks() {
         guard let count = Int(sendCount), count > 0 else {
             feedbackMessage = "Please enter a valid number of times to send."
             return
         }
-
+        
         status = "sending..."
         statusColor = .yellow
-
-        for _ in 0..<count {
-            for webhook in selectedWebhooks {
-                sendToWebhook(webhook: webhook, message: textInput)
+        
+        Task {
+            var messagesSent = 0
+            for _ in 0..<count {
+                for webhook in selectedWebhooks {
+                    sendToWebhook(webhook: webhook, message: textInput)
+                    messagesSent += 1
+                    status = "sending... (\(messagesSent))"
+                    statusColor = .yellow
+                    try await Task.sleep(nanoseconds: 500_000_000) // Add delay
+                }
             }
+            
+            status = "inactive"
+            statusColor = .red
         }
     }
-
+    
     private func sendToWebhook(webhook: String, message: String) {
         guard let url = URL(string: webhook) else {
             print("Invalid webhook URL")
@@ -138,14 +149,14 @@ struct ContentView: View {
             statusColor = .red
             return
         }
-
+        
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-
+        
         let payload: [String: Any] = ["content": message]
         request.httpBody = try? JSONSerialization.data(withJSONObject: payload, options: [])
-
+        
         URLSession.shared.dataTask(with: request) { data, response, error in
             if let error = error {
                 print("Error sending message: \(error.localizedDescription)")
@@ -157,8 +168,6 @@ struct ContentView: View {
                 statusColor = .red
             } else {
                 print("Message sent successfully")
-                status = "sent"
-                statusColor = .green
             }
         }.resume()
     }
@@ -169,7 +178,7 @@ struct CustomTextField: View {
     @Binding var text: String
     var editingChanged: (Bool) -> () = { _ in }
     var commit: () -> () = { }
-
+    
     var body: some View {
         ZStack(alignment: .leading) {
             if text.isEmpty { placeholder }
@@ -182,13 +191,13 @@ struct SettingsView: View {
     @Binding var webhookURL: String
     @Binding var savedWebhooks: [String]
     @State private var errorMessage: String = ""
-
+    
     var body: some View {
         VStack {
             Text("Webhooks")
                 .font(.headline)
                 .padding(.bottom, 10)
-
+            
             TextField("Enter Discord Webhook URL", text: $webhookURL)
                 .padding()
                 .background(Color(.systemGray5))
@@ -200,20 +209,20 @@ struct SettingsView: View {
                 .onDisappear {
                     validateAndSaveWebhook()
                 }
-
+            
             if !errorMessage.isEmpty {
                 Text(errorMessage)
                     .foregroundColor(.red)
                     .padding(.top, 5)
             }
-
+            
             List {
                 ForEach(savedWebhooks, id: \.self) { webhook in
                     Text(webhook)
                 }
                 .onDelete(perform: removeWebhook)
             }
-
+            
             Spacer()
         }
         .padding()
@@ -221,25 +230,25 @@ struct SettingsView: View {
         .cornerRadius(20)
         .shadow(radius: 10)
     }
-
+    
     private func validateAndSaveWebhook() {
         if isValidWebhookURL(webhookURL) {
-            if !savedWebhooks.contains(webhookURL) {
+            if (!savedWebhooks.contains(webhookURL)) {
                 savedWebhooks.append(webhookURL)
                 UserDefaults.standard.set(savedWebhooks, forKey: "savedWebhooks")
-                webhookURL = "" // Clear the input box
+                webhookURL = ""
                 errorMessage = ""
             }
         } else {
             errorMessage = "Invalid Discord Webhook URL. Please enter a valid URL."
         }
     }
-
+    
     private func isValidWebhookURL(_ url: String) -> Bool {
         let regex = "^https://discord.com/api/webhooks/\\d+/[A-Za-z0-9_-]+$"
         return NSPredicate(format: "SELF MATCHES %@", regex).evaluate(with: url)
     }
-
+    
     private func removeWebhook(at offsets: IndexSet) {
         savedWebhooks.remove(atOffsets: offsets)
         UserDefaults.standard.set(savedWebhooks, forKey: "savedWebhooks")
