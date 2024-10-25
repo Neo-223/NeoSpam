@@ -4,13 +4,14 @@ struct ContentView: View {
     @State private var textInput: String = ""
     @State private var webhookURL: String = UserDefaults.standard.string(forKey: "webhookURL") ?? ""
     @State private var showSettings: Bool = false
+    @State private var showCredits: Bool = false
     @State private var feedbackMessage: String = ""
     @State private var savedWebhooks: [String] = UserDefaults.standard.stringArray(forKey: "savedWebhooks") ?? []
     @State private var selectedWebhooks: Set<String> = []
-    @State private var isSubmitted: Bool = false
     @State private var sendCount: String = "1"
     @State private var status: String = "inactive"
     @State private var statusColor: Color = .red
+    @State private var isSending: Bool = false
     
     var body: some View {
         ZStack {
@@ -39,26 +40,29 @@ struct ContentView: View {
                         .cornerRadius(10)
                         .shadow(radius: 5)
                         .foregroundColor(.black)
+                        .disabled(isSending)
                     
                     ScrollView {
                         LazyVStack(spacing: 0) {
                             ForEach(Array(savedWebhooks.enumerated()), id: \.element) { index, webhook in
                                 Button(action: {
-                                    if selectedWebhooks.contains(webhook) {
-                                        selectedWebhooks.remove(webhook)
-                                    } else {
-                                        selectedWebhooks.insert(webhook)
+                                    if !isSending {
+                                        withAnimation {
+                                            toggleWebhookSelection(webhook)
+                                        }
                                     }
                                 }) {
                                     HStack {
-                                        Text("Link \(index + 1)")
+                                        Text("Webhook \(index + 1)")
                                             .font(.body)
                                             .padding()
                                             .frame(maxWidth: .infinity, alignment: .leading)
-                                            .background(selectedWebhooks.contains(webhook) ? Color.blue.opacity(0.2) : Color.clear)
+                                            .background(selectedWebhooks.contains(webhook) ? Color.blue.opacity(0.2) : Color.white)
                                             .foregroundColor(.black)
                                     }
                                     .frame(maxWidth: .infinity)
+                                    .background(selectedWebhooks.contains(webhook) ? Color.blue.opacity(0.2) : Color.white)
+                                    .shadow(radius: selectedWebhooks.contains(webhook) ? 5 : 0)
                                 }
                                 .buttonStyle(PlainButtonStyle())
                                 .frame(maxWidth: .infinity)
@@ -76,11 +80,11 @@ struct ContentView: View {
                         .cornerRadius(10)
                         .shadow(radius: 5)
                         .foregroundColor(.black)
-                        .keyboardType(.numberPad) // Use number keyboard
+                        .keyboardType(.numberPad)
+                        .disabled(isSending)
                     
                     Button(action: {
-                        sendTextToWebhooks()
-                        isSubmitted = true
+                        handleSendButton()
                     }) {
                         Text("Send")
                             .padding()
@@ -93,13 +97,24 @@ struct ContentView: View {
                                     .stroke(Color.white, lineWidth: 2)
                             )
                     }
+                    .disabled(isSending)
                 }
                 .padding()
                 
                 Spacer()
                 
                 HStack {
+                    Button(action: {
+                        showCredits.toggle()
+                    }) {
+                        Text("Credits")
+                            .foregroundColor(.white)
+                            .padding()
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    
                     Spacer()
+                    
                     Button(action: {
                         showSettings.toggle()
                     }) {
@@ -107,12 +122,36 @@ struct ContentView: View {
                             .foregroundColor(.white)
                             .padding()
                     }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
                 }
+                .padding([.leading, .trailing], 20)
             }
             .padding()
         }
         .sheet(isPresented: $showSettings) {
             SettingsView(webhookURL: $webhookURL, savedWebhooks: $savedWebhooks)
+        }
+        .sheet(isPresented: $showCredits) {
+            CreditsView()
+        }
+    }
+    
+    private func handleSendButton() {
+        WebhookManager.shared.checkNetworkConnectivity { isConnected in
+            if isConnected {
+                if textInput.isEmpty {
+                    updateStatus("error: No text entered", color: .red)
+                } else if selectedWebhooks.isEmpty {
+                    updateStatus("error: No webhook selected", color: .red)
+                } else if sendCount.isEmpty {
+                    updateStatus("error: No send count entered", color: .red)
+                } else {
+                    updateStatus("sending...", color: .yellow)
+                    sendTextToWebhooks()
+                }
+            } else {
+                updateStatus("error: No network connection", color: .red)
+            }
         }
     }
     
@@ -122,54 +161,40 @@ struct ContentView: View {
             return
         }
         
-        status = "sending..."
-        statusColor = .yellow
+        isSending = true
         
         Task {
             var messagesSent = 0
             for _ in 0..<count {
                 for webhook in selectedWebhooks {
-                    sendToWebhook(webhook: webhook, message: textInput)
-                    messagesSent += 1
-                    status = "sending... (\(messagesSent))"
-                    statusColor = .yellow
-                    try await Task.sleep(nanoseconds: 500_000_000) // Add delay
+                    WebhookManager.shared.sendToWebhook(webhook: webhook, message: textInput, updateStatus: updateStatus) { success in
+                        if success {
+                            messagesSent += 1
+                            updateStatus("sending... (\(messagesSent))", color: .yellow)
+                        }
+                    }
+                    try await Task.sleep(nanoseconds: 420_000_000)
                 }
             }
             
-            status = "inactive"
-            statusColor = .red
+            updateStatus("inactive", color: .red)
+            isSending = false
         }
     }
     
-    private func sendToWebhook(webhook: String, message: String) {
-        guard let url = URL(string: webhook) else {
-            print("Invalid webhook URL")
-            status = "error: invalid URL"
-            statusColor = .red
-            return
+    private func updateStatus(_ message: String, color: Color) {
+        DispatchQueue.main.async {
+            status = message
+            statusColor = color
         }
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        
-        let payload: [String: Any] = ["content": message]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: payload, options: [])
-        
-        URLSession.shared.dataTask(with: request) { data, response, error in
-            if let error = error {
-                print("Error sending message: \(error.localizedDescription)")
-                status = "error: \(error.localizedDescription)"
-                statusColor = .red
-            } else if let httpResponse = response as? HTTPURLResponse, !(200...299).contains(httpResponse.statusCode) {
-                print("Server error: \(httpResponse.statusCode)")
-                status = "error: server \(httpResponse.statusCode)"
-                statusColor = .red
-            } else {
-                print("Message sent successfully")
-            }
-        }.resume()
+    }
+    
+    private func toggleWebhookSelection(_ webhook: String) {
+        if selectedWebhooks.contains(webhook) {
+            selectedWebhooks.remove(webhook)
+        } else {
+            selectedWebhooks.insert(webhook)
+        }
     }
 }
 
@@ -184,74 +209,6 @@ struct CustomTextField: View {
             if text.isEmpty { placeholder }
             TextField("", text: $text, onEditingChanged: editingChanged, onCommit: commit)
         }
-    }
-}
-
-struct SettingsView: View {
-    @Binding var webhookURL: String
-    @Binding var savedWebhooks: [String]
-    @State private var errorMessage: String = ""
-    
-    var body: some View {
-        VStack {
-            Text("Webhooks")
-                .font(.headline)
-                .padding(.bottom, 10)
-            
-            TextField("Enter Discord Webhook URL", text: $webhookURL)
-                .padding()
-                .background(Color(.systemGray5))
-                .cornerRadius(10)
-                .shadow(radius: 5)
-                .onSubmit {
-                    validateAndSaveWebhook()
-                }
-                .onDisappear {
-                    validateAndSaveWebhook()
-                }
-            
-            if !errorMessage.isEmpty {
-                Text(errorMessage)
-                    .foregroundColor(.red)
-                    .padding(.top, 5)
-            }
-            
-            List {
-                ForEach(savedWebhooks, id: \.self) { webhook in
-                    Text(webhook)
-                }
-                .onDelete(perform: removeWebhook)
-            }
-            
-            Spacer()
-        }
-        .padding()
-        .background(Color(.systemGray6))
-        .cornerRadius(20)
-        .shadow(radius: 10)
-    }
-    
-    private func validateAndSaveWebhook() {
-        if isValidWebhookURL(webhookURL) {
-            if (!savedWebhooks.contains(webhookURL)) {
-                savedWebhooks.append(webhookURL)
-                UserDefaults.standard.set(savedWebhooks, forKey: "savedWebhooks")
-                webhookURL = ""
-                errorMessage = ""
-            }
-        } else {
-            errorMessage = "Invalid Discord Webhook URL. Please enter a valid URL."
-        }
-    }
-    
-    private func isValidWebhookURL(_ url: String) -> Bool {
-        let regex = "^https://discord.com/api/webhooks/\\d+/[A-Za-z0-9_-]+$"
-        return NSPredicate(format: "SELF MATCHES %@", regex).evaluate(with: url)
-    }
-    
-    private func removeWebhook(at offsets: IndexSet) {
-        savedWebhooks.remove(atOffsets: offsets)
-        UserDefaults.standard.set(savedWebhooks, forKey: "savedWebhooks")
     }
 }
 
