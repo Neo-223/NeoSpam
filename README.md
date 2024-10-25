@@ -13,3 +13,6 @@ Developed by Neo
 
 # Disclaimer
 No support is offered for this app. Use at your own risk.
+
+# Compatibility
+Please note that NeoSpam requires iOS 15 or newer. Older versions of iOS are not supported.
