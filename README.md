@@ -1,6 +1,5 @@
 # NeoSpam
-NeoSpam is a mobile application designed to manage Discord webhooks with ease.
-
+NeoSpam is a mobile application designed to manage Discord webhooks with ease. It’s perfect for managing webhooks on the go!
 # Features
 
 * Manage Webhooks: Easily add and delete Discord webhooks.
